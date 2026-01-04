@@ -13,6 +13,7 @@ import time
 import pika
 import requests
 import threading
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from minio import Minio
 from minio.error import S3Error
@@ -30,6 +31,11 @@ MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minio")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minio123")
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://localhost:8080")
 
+# Auto-cleanup settings (to save storage space)
+CLEANUP_PROCESSED_FILES = os.getenv("CLEANUP_PROCESSED_FILES", "true").lower() == "true"
+CLEANUP_AFTER_MINUTES = int(os.getenv("CLEANUP_AFTER_MINUTES", "30"))
+CLEANUP_SOURCE_AFTER_PROCESS = os.getenv("CLEANUP_SOURCE_AFTER_PROCESS", "true").lower() == "true"
+
 # Setup MinIO
 minio_client = Minio(
     MINIO_ENDPOINT,
@@ -37,6 +43,32 @@ minio_client = Minio(
     secret_key=MINIO_SECRET_KEY,
     secure=False
 )
+
+def delete_from_minio(bucket, object_key):
+    """Delete a file from MinIO to save storage space"""
+    try:
+        minio_client.remove_object(bucket, object_key)
+        print(f"Deleted {object_key} from {bucket} (saving storage)")
+    except S3Error as e:
+        print(f"Failed to delete {object_key}: {e}")
+
+def cleanup_old_files(bucket, max_age_minutes=30):
+    """Delete files older than max_age_minutes to free up space"""
+    try:
+        cutoff_time = datetime.now() - timedelta(minutes=max_age_minutes)
+        objects = minio_client.list_objects(bucket, prefix="dubbed_")
+        deleted_count = 0
+        for obj in objects:
+            if obj.last_modified.replace(tzinfo=None) < cutoff_time:
+                try:
+                    minio_client.remove_object(bucket, obj.object_name)
+                    deleted_count += 1
+                except:
+                    pass
+        if deleted_count > 0:
+            print(f"Cleaned up {deleted_count} old processed files from {bucket}")
+    except Exception as e:
+        print(f"Cleanup warning: {e}")
 
 def download_file(bucket, object_key, file_path):
     print(f"Downloading {object_key} from {bucket}...")
@@ -244,7 +276,16 @@ def process_job(ch, method, properties, body):
         output_key = f"dubbed_{job_id}.mp4"
         upload_file(bucket, output_key, local_output)
         
-        # 7. Complete
+        # 7. Auto-cleanup source file from MinIO (saves storage space)
+        if CLEANUP_SOURCE_AFTER_PROCESS:
+            print(f"Auto-cleaning source file {source_key} to save storage...")
+            delete_from_minio(bucket, source_key)
+        
+        # 8. Cleanup old processed files (older than CLEANUP_AFTER_MINUTES)
+        if CLEANUP_PROCESSED_FILES:
+            cleanup_old_files(bucket, CLEANUP_AFTER_MINUTES)
+        
+        # 9. Complete
         update_job(job_id, status="COMPLETED", progress=100, output_key=output_key, activity="Done!", etr="0s")
         print(f"Job {job_id} Completed!")
 

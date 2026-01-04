@@ -1,77 +1,102 @@
-# Test Environment Docker Compose
-# Different ports to allow parallel environments
-# Port mapping: dev ports + 100 (PostgreSQL: 5433, MinIO: 9100, RabbitMQ: 5673/15673)
+# Test Environment Docker Compose - OPTIMIZED FOR LOW RAM
+# Total RAM usage: ~2GB (leaves room for your system)
+# Files auto-cleanup after processing
 
 version: "3.9"
 
 services:
+  # ==========================================
+  # Core Infrastructure (Essential)
+  # ==========================================
+
   postgres-test:
-    image: postgres:15
+    image: postgres:15-alpine # Alpine is smaller
     container_name: dubber-postgres-test
     environment:
       POSTGRES_DB: dubber_test
       POSTGRES_USER: dubber
       POSTGRES_PASSWORD: dubber_test
+      # Optimize PostgreSQL for low RAM
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=64MB"
+      - "-c"
+      - "effective_cache_size=128MB"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "maintenance_work_mem=32MB"
     ports:
       - "5433:5432"
     volumes:
       - pgdata-test:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dubber -d dubber_test"]
+      test: [ "CMD-SHELL", "pg_isready -U dubber -d dubber_test" ]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
   minio-test:
-    image: minio/minio
+    image: minio/minio:latest
     container_name: dubber-minio-test
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: minio_test
+      # Auto-cleanup: Enable lifecycle management
+      MINIO_LIFECYCLE_ENABLED: "true"
     ports:
       - "9100:9000"
       - "9101:9001"
     volumes:
       - minio-data-test:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
       timeout: 20s
       retries: 3
     restart: unless-stopped
 
   redis-test:
-    image: redis:7
+    image: redis:7-alpine # Alpine is smaller
     container_name: dubber-redis-test
+    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru
     ports:
       - "6380:6379"
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+        reservations:
+          memory: 32M
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
-  rabbitmq-test:
-    image: rabbitmq:3-management
-    container_name: dubber-rabbitmq-test
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-    ports:
-      - "5673:5672"
-      - "15673:15672"
-    healthcheck:
-      test: rabbitmq-diagnostics check_port_connectivity
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    restart: unless-stopped
+  # ==========================================
+  # API Gateway (Spring Boot)
+  # ==========================================
 
   api-gateway-test:
-    build: 
+    build:
       context: ../apps/api-gateway
       dockerfile: Dockerfile
     container_name: dubber-api-gateway-test
@@ -88,11 +113,27 @@ services:
       MINIO_ENDPOINT: http://minio-test:9000
       MINIO_ACCESS_KEY: minio
       MINIO_SECRET_KEY: minio_test
-      RABBITMQ_HOST: rabbitmq-test
-      RABBITMQ_PORT: 5672
+      REDIS_HOST: redis-test
+      REDIS_PORT: 6379
+      # JVM optimization for low RAM
+      JAVA_OPTS: >-
+        -Xmx384m  -Xms128m  -XX:+UseG1GC  -XX:MaxGCPauseMillis=100 -XX:+UseStringDeduplication
+      # Auto-cleanup settings
+      APP_CLEANUP_ENABLED: "true"
+      APP_CLEANUP_AFTER_HOURS: "1"
     ports:
       - "8180:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
     restart: unless-stopped
+
+  # ==========================================
+  # Frontend (Nginx - Very Lightweight)
+  # ==========================================
 
   frontend-test:
     build:
@@ -105,26 +146,53 @@ services:
       - api-gateway-test
     ports:
       - "4202:80"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 32M
     restart: unless-stopped
+
+  # ==========================================
+  # Python Services (Lightweight)
+  # ==========================================
 
   orchestrator-test:
     build: ../services/orchestrator
     container_name: dubber-orchestrator-test
     depends_on:
       - api-gateway-test
-      - rabbitmq-test
+      - redis-test
     environment:
       ENVIRONMENT: test
       API_GATEWAY_URL: http://api-gateway-test:8080
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq-test:5672//
+      REDIS_URL: redis://redis-test:6379/0
+      # Auto-cleanup after processing
+      CLEANUP_PROCESSED_FILES: "true"
+      CLEANUP_AFTER_MINUTES: "30"
     ports:
       - "8480:8400"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
     restart: unless-stopped
 
+# ==========================================
+# Volumes (Persistent Data)
+# ==========================================
 volumes:
   pgdata-test:
+    driver: local
   minio-data-test:
+    driver: local
 
+# ==========================================
+# Network
+# ==========================================
 networks:
   default:
     name: dubber-test-network

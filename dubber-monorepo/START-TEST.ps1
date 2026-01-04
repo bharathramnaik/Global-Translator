@@ -1,131 +1,121 @@
-# Global Translator - Test Environment Startup Script
-# Starts all services for the Test environment
+# Global Translator - Test Environment Quick Start
+# OPTIMIZED FOR LOW RAM SYSTEMS (4GB or less)
+# This script runs only essential services to save memory
 
 param(
-    [switch]$SkipDocker,
-    [switch]$SkipBackend,
-    [switch]$SkipFrontend
+    [switch]$Minimal,      # Run only database + minio + redis (for frontend dev)
+    [switch]$NoFrontend,   # Skip frontend container (run Angular locally)
+    [switch]$Cleanup       # Clean up containers and volumes
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $RootDir = $PSScriptRoot
 
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Global Translator - TEST Environment  " -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "================================================" -ForegroundColor Cyan
+Write-Host "   GLOBAL TRANSLATOR - TEST ENVIRONMENT        " -ForegroundColor Cyan
+Write-Host "   Optimized for Low RAM Systems               " -ForegroundColor Cyan
+Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Function to check if Docker is running
-function Test-DockerRunning {
-    try {
-        docker info 2>&1 | Out-Null
-        return $true
-    } catch {
-        return $false
-    }
+# Check Docker
+Write-Host "Checking Docker..." -NoNewline
+$dockerRunning = docker info 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host " NOT RUNNING!" -ForegroundColor Red
+    Write-Host "Please start Docker Desktop first." -ForegroundColor Yellow
+    exit 1
 }
+Write-Host " OK" -ForegroundColor Green
 
-# Function to wait for service
-function Wait-ForService {
-    param(
-        [string]$Url,
-        [string]$ServiceName,
-        [int]$MaxAttempts = 30
-    )
-    
-    Write-Host "Waiting for $ServiceName..." -NoNewline
-    $attempts = 0
-    while ($attempts -lt $MaxAttempts) {
-        try {
-            $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue
-            if ($response.StatusCode -eq 200) {
-                Write-Host " Ready!" -ForegroundColor Green
-                return $true
-            }
-        } catch {
-            # Service not ready yet
-        }
-        Write-Host "." -NoNewline
-        Start-Sleep -Seconds 2
-        $attempts++
-    }
-    Write-Host " Timeout!" -ForegroundColor Red
-    return $false
-}
+# Get Docker memory info
+$dockerMem = docker info --format "{{.MemTotal}}" 2>$null
+$dockerMemGB = [math]::Round($dockerMem / 1GB, 1)
+Write-Host "Docker Memory: ${dockerMemGB}GB allocated" -ForegroundColor Gray
 
-# Step 1: Start Docker Infrastructure
-if (-not $SkipDocker) {
-    Write-Host "[1/3] Starting Docker Infrastructure (Test)..." -ForegroundColor Yellow
-    
-    if (-not (Test-DockerRunning)) {
-        Write-Host "ERROR: Docker is not running. Please start Docker Desktop first." -ForegroundColor Red
-        exit 1
-    }
-    
+# Cleanup mode
+if ($Cleanup) {
+    Write-Host ""
+    Write-Host "Cleaning up test environment..." -ForegroundColor Yellow
     Push-Location "$RootDir\infra"
-    try {
-        docker-compose -f docker-compose.test.yml up -d
-        Write-Host "Docker services started." -ForegroundColor Green
-    } finally {
-        Pop-Location
-    }
-    
-    # Wait for PostgreSQL
-    Write-Host "Waiting for database to be ready..."
-    Start-Sleep -Seconds 10
-} else {
-    Write-Host "[1/3] Skipping Docker Infrastructure" -ForegroundColor Gray
+    docker-compose -f docker-compose.test.yml down -v --remove-orphans
+    docker system prune -f
+    Pop-Location
+    Write-Host "Cleanup complete!" -ForegroundColor Green
+    exit 0
 }
 
-# Step 2: Start API Gateway
-if (-not $SkipBackend) {
-    Write-Host ""
-    Write-Host "[2/3] Starting API Gateway (Test Profile)..." -ForegroundColor Yellow
-    
-    Push-Location "$RootDir\apps\api-gateway"
-    try {
-        # Set environment for test
-        $env:SPRING_PROFILES_ACTIVE = "test"
-        $env:SERVER_PORT = "8180"
+# Navigate to infra directory
+Push-Location "$RootDir\infra"
+
+try {
+    # Determine which services to start
+    if ($Minimal) {
+        Write-Host ""
+        Write-Host "Starting MINIMAL services (saves RAM)..." -ForegroundColor Yellow
+        Write-Host "  - PostgreSQL, MinIO, Redis only" -ForegroundColor Gray
+        Write-Host "  - Run frontend locally: cd apps/frontend && ng serve --port 4202" -ForegroundColor Gray
+        Write-Host ""
         
-        # Start in background
-        Start-Process -FilePath "mvn" -ArgumentList "spring-boot:run", "-Dspring.profiles.active=test", "-Dserver.port=8180" -WindowStyle Normal
-        Write-Host "API Gateway starting on port 8180..." -ForegroundColor Green
-    } finally {
-        Pop-Location
+        docker-compose -f docker-compose.test.yml up -d postgres-test minio-test redis-test
+        
     }
-    
-    # Wait for API Gateway
-    Wait-ForService -Url "http://localhost:8180/actuator/health" -ServiceName "API Gateway"
-} else {
-    Write-Host "[2/3] Skipping API Gateway" -ForegroundColor Gray
-}
+    elseif ($NoFrontend) {
+        Write-Host ""
+        Write-Host "Starting services WITHOUT frontend container..." -ForegroundColor Yellow
+        Write-Host "  - Run frontend locally to save RAM" -ForegroundColor Gray
+        Write-Host ""
+        
+        docker-compose -f docker-compose.test.yml up -d postgres-test minio-test redis-test api-gateway-test orchestrator-test
+        
+    }
+    else {
+        Write-Host ""
+        Write-Host "Starting ALL services..." -ForegroundColor Yellow
+        Write-Host "  (Use -Minimal or -NoFrontend to save RAM)" -ForegroundColor Gray
+        Write-Host ""
+        
+        docker-compose -f docker-compose.test.yml up -d
+    }
 
-# Step 3: Start Frontend
-if (-not $SkipFrontend) {
+    # Wait for services
     Write-Host ""
-    Write-Host "[3/3] Starting Frontend (Test Configuration)..." -ForegroundColor Yellow
-    
-    Push-Location "$RootDir\apps\frontend"
-    try {
-        Start-Process -FilePath "npx" -ArgumentList "ng", "serve", "--configuration=test", "--port=4202" -WindowStyle Normal
-        Write-Host "Frontend starting on port 4202..." -ForegroundColor Green
-    } finally {
-        Pop-Location
-    }
-} else {
-    Write-Host "[3/3] Skipping Frontend" -ForegroundColor Gray
-}
+    Write-Host "Waiting for services to start..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 10
 
-Write-Host ""
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  TEST Environment Started!            " -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Access Points:" -ForegroundColor White
-Write-Host "  Frontend:   http://localhost:4202" -ForegroundColor Green
-Write-Host "  API:        http://localhost:8180" -ForegroundColor Green
-Write-Host "  MinIO:      http://localhost:9101" -ForegroundColor Green
-Write-Host "  RabbitMQ:   http://localhost:15673" -ForegroundColor Green
-Write-Host ""
-Write-Host "Press Ctrl+C in each terminal window to stop services."
+    # Check service status
+    Write-Host ""
+    Write-Host "Service Status:" -ForegroundColor Cyan
+    docker-compose -f docker-compose.test.yml ps
+
+    # Show access information
+    Write-Host ""
+    Write-Host "================================================" -ForegroundColor Green
+    Write-Host "   TEST ENVIRONMENT READY!                     " -ForegroundColor Green
+    Write-Host "================================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Access Points:" -ForegroundColor White
+    Write-Host "  Frontend:      http://localhost:4202" -ForegroundColor Cyan
+    Write-Host "  API Gateway:   http://localhost:8180" -ForegroundColor Cyan
+    Write-Host "  API Docs:      http://localhost:8180/swagger-ui.html" -ForegroundColor Cyan
+    Write-Host "  MinIO Console: http://localhost:9101 (minio/minio_test)" -ForegroundColor Cyan
+    Write-Host "  PostgreSQL:    localhost:5433 (dubber/dubber_test)" -ForegroundColor Cyan
+    Write-Host ""
+    
+    if ($Minimal) {
+        Write-Host "To run frontend locally:" -ForegroundColor Yellow
+        Write-Host "  cd apps/frontend" -ForegroundColor White
+        Write-Host "  ng serve --configuration=test --port 4202" -ForegroundColor White
+        Write-Host ""
+    }
+    
+    Write-Host "To stop services:" -ForegroundColor Yellow
+    Write-Host "  .\START-TEST.ps1 -Cleanup" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Memory Usage:" -ForegroundColor Yellow
+    docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}"
+
+}
+finally {
+    Pop-Location
+}
