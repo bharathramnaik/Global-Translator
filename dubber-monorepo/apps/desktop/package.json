@@ -1,0 +1,102 @@
+{
+    "name": "global-translator-desktop",
+    "productName": "Global Translator",
+    "version": "1.0.0",
+    "description": "Global Translator Desktop Application - Video Dubbing and Translation Platform",
+    "main": "main.js",
+    "scripts": {
+        "start": "electron .",
+        "dev": "electron . --dev",
+        "build": "npm run build:frontend && electron-builder",
+        "build:frontend": "cd ../frontend && npm run build -- --configuration=production --base-href=./",
+        "build:win": "electron-builder --win",
+        "build:mac": "electron-builder --mac",
+        "build:linux": "electron-builder --linux",
+        "pack": "electron-builder --dir",
+        "dist": "electron-builder",
+        "postinstall": "electron-builder install-app-deps"
+    },
+    "author": {
+        "name": "Global Translator Team",
+        "email": "support@globaltranslator.com"
+    },
+    "license": "MIT",
+    "dependencies": {
+        "electron-updater": "^6.1.7",
+        "electron-log": "^5.0.3"
+    },
+    "devDependencies": {
+        "electron": "^28.1.0",
+        "electron-builder": "^24.9.1"
+    },
+    "build": {
+        "appId": "com.globaltranslator.desktop",
+        "productName": "Global Translator",
+        "copyright": "Copyright © 2024 Global Translator",
+        "directories": {
+            "buildResources": "build",
+            "output": "dist"
+        },
+        "files": [
+            "main.js",
+            "preload.js",
+            "package.json",
+            {
+                "from": "../frontend/dist/dubber",
+                "to": "app",
+                "filter": [
+                    "**/*"
+                ]
+            }
+        ],
+        "win": {
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                },
+                {
+                    "target": "portable",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "icon": "icons/icon.ico",
+            "artifactName": "${productName}-${version}-${arch}.${ext}"
+        },
+        "nsis": {
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true,
+            "installerIcon": "icons/icon.ico",
+            "uninstallerIcon": "icons/icon.ico",
+            "installerHeaderIcon": "icons/icon.ico",
+            "createDesktopShortcut": true,
+            "createStartMenuShortcut": true,
+            "shortcutName": "Global Translator"
+        },
+        "mac": {
+            "target": [
+                "dmg",
+                "zip"
+            ],
+            "icon": "icons/icon.icns",
+            "category": "public.app-category.video"
+        },
+        "linux": {
+            "target": [
+                "AppImage",
+                "deb"
+            ],
+            "icon": "icons",
+            "category": "Video"
+        },
+        "publish": {
+            "provider": "github",
+            "owner": "your-org",
+            "repo": "global-translator"
+        }
+    }
+}

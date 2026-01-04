@@ -1,0 +1,130 @@
+# Test Environment Docker Compose
+# Different ports to allow parallel environments
+# Port mapping: dev ports + 100 (PostgreSQL: 5433, MinIO: 9100, RabbitMQ: 5673/15673)
+
+version: "3.9"
+
+services:
+  postgres-test:
+    image: postgres:15
+    container_name: dubber-postgres-test
+    environment:
+      POSTGRES_DB: dubber_test
+      POSTGRES_USER: dubber
+      POSTGRES_PASSWORD: dubber_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata-test:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dubber -d dubber_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  minio-test:
+    image: minio/minio
+    container_name: dubber-minio-test
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio_test
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    volumes:
+      - minio-data-test:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  redis-test:
+    image: redis:7
+    container_name: dubber-redis-test
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  rabbitmq-test:
+    image: rabbitmq:3-management
+    container_name: dubber-rabbitmq-test
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    healthcheck:
+      test: rabbitmq-diagnostics check_port_connectivity
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  api-gateway-test:
+    build: 
+      context: ../apps/api-gateway
+      dockerfile: Dockerfile
+    container_name: dubber-api-gateway-test
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      minio-test:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: test
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-test:5432/dubber_test
+      SPRING_DATASOURCE_USERNAME: dubber
+      SPRING_DATASOURCE_PASSWORD: dubber_test
+      MINIO_ENDPOINT: http://minio-test:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio_test
+      RABBITMQ_HOST: rabbitmq-test
+      RABBITMQ_PORT: 5672
+    ports:
+      - "8180:8080"
+    restart: unless-stopped
+
+  frontend-test:
+    build:
+      context: ../apps/frontend
+      dockerfile: Dockerfile
+      args:
+        CONFIGURATION: test
+    container_name: dubber-frontend-test
+    depends_on:
+      - api-gateway-test
+    ports:
+      - "4202:80"
+    restart: unless-stopped
+
+  orchestrator-test:
+    build: ../services/orchestrator
+    container_name: dubber-orchestrator-test
+    depends_on:
+      - api-gateway-test
+      - rabbitmq-test
+    environment:
+      ENVIRONMENT: test
+      API_GATEWAY_URL: http://api-gateway-test:8080
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq-test:5672//
+    ports:
+      - "8480:8400"
+    restart: unless-stopped
+
+volumes:
+  pgdata-test:
+  minio-data-test:
+
+networks:
+  default:
+    name: dubber-test-network

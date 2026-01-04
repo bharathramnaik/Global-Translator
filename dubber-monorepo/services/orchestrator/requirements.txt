@@ -1,0 +1,12 @@
+pika
+minio
+requests
+moviepy<2.0
+ffmpeg-python
+faster-whisper
+googletrans==4.0.0-rc1
+gTTS
+numpy
+soundfile
+librosa
+pydub

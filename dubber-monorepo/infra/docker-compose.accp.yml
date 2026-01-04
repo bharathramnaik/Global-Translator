@@ -1,0 +1,191 @@
+# Acceptance Environment Docker Compose
+# Production-like configuration for UAT and staging
+# Port mapping: dev ports + 200 (PostgreSQL: 5434, MinIO: 9200, RabbitMQ: 5674/15674)
+
+version: "3.9"
+
+services:
+  postgres-accp:
+    image: postgres:15
+    container_name: dubber-postgres-accp
+    environment:
+      POSTGRES_DB: dubber_accp
+      POSTGRES_USER: dubber
+      POSTGRES_PASSWORD: dubber_accp
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata-accp:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U dubber -d dubber_accp" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  minio-accp:
+    image: minio/minio
+    container_name: dubber-minio-accp
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio_accp
+    ports:
+      - "9200:9000"
+      - "9201:9001"
+    volumes:
+      - minio-data-accp:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  redis-accp:
+    image: redis:7
+    container_name: dubber-redis-accp
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  rabbitmq-accp:
+    image: rabbitmq:3-management
+    container_name: dubber-rabbitmq-accp
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5674:5672"
+      - "15674:15672"
+    healthcheck:
+      test: rabbitmq-diagnostics check_port_connectivity
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  api-gateway-accp:
+    build:
+      context: ../apps/api-gateway
+      dockerfile: Dockerfile
+    container_name: dubber-api-gateway-accp
+    depends_on:
+      postgres-accp:
+        condition: service_healthy
+      minio-accp:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: accp
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-accp:5432/dubber_accp
+      SPRING_DATASOURCE_USERNAME: dubber
+      SPRING_DATASOURCE_PASSWORD: dubber_accp
+      MINIO_ENDPOINT: http://minio-accp:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio_accp
+      RABBITMQ_HOST: rabbitmq-accp
+      RABBITMQ_PORT: 5672
+      JAVA_OPTS: "-Xmx512m -Xms256m"
+    ports:
+      - "8280:8080"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  frontend-accp:
+    build:
+      context: ../apps/frontend
+      dockerfile: Dockerfile
+      args:
+        CONFIGURATION: accp
+    container_name: dubber-frontend-accp
+    depends_on:
+      - api-gateway-accp
+    ports:
+      - "4203:80"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  orchestrator-accp:
+    build: ../services/orchestrator
+    container_name: dubber-orchestrator-accp
+    depends_on:
+      - api-gateway-accp
+      - rabbitmq-accp
+    environment:
+      ENVIRONMENT: accp
+      API_GATEWAY_URL: http://api-gateway-accp:8080
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq-accp:5672//
+    ports:
+      - "8580:8400"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # Microservices
+  service-asr-accp:
+    build: ../services/service-asr
+    container_name: dubber-asr-accp
+    depends_on:
+      - redis-accp
+    environment:
+      ENVIRONMENT: accp
+      REDIS_URL: redis://redis-accp:6379/0
+    ports:
+      - "8200:8100"
+    restart: unless-stopped
+
+  service-translate-accp:
+    build: ../services/service-translate
+    container_name: dubber-translate-accp
+    environment:
+      ENVIRONMENT: accp
+    ports:
+      - "8300:8200"
+    restart: unless-stopped
+
+  service-tts-accp:
+    build: ../services/service-tts
+    container_name: dubber-tts-accp
+    environment:
+      ENVIRONMENT: accp
+    ports:
+      - "8400:8300"
+    restart: unless-stopped
+
+volumes:
+  pgdata-accp:
+  minio-data-accp:
+
+
+networks:
+  default:
+    name: dubber-accp-network

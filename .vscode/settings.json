@@ -1,0 +1,7 @@
+{
+    "java.compile.nullAnalysis.mode": "automatic",
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "CodeGPT.apiKey": "Ollama",
+    "continue.enableQuickActions": true,
+    "continue.enableConsole": true
+}

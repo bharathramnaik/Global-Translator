@@ -1,0 +1,53 @@
+# Test Environment Profile
+# Uses PostgreSQL database for integration testing
+
+spring:
+  config:
+    activate:
+      on-profile: test
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/dubber_test}
+    driverClassName: org.postgresql.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:dubber}
+    password: ${SPRING_DATASOURCE_PASSWORD:dubber_test}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  h2:
+    console:
+      enabled: false
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5673}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASS:guest}
+
+server:
+  port: ${SERVER_PORT:8180}
+  servlet:
+    context-path: /
+
+# MinIO Configuration for Test
+minio:
+  enabled: true
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9100}
+  access-key: ${MINIO_ACCESS_KEY:minio}
+  secret-key: ${MINIO_SECRET_KEY:minio_test}
+  bucket: dubber-videos-test
+
+app:
+  minio:
+    bucket: dubber-videos-test
+  environment: test
+
+logging:
+  level:
+    root: INFO
+    com.dubber: INFO
+  file:
+    name: logs/api-gateway-test.log

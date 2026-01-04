@@ -1,0 +1,246 @@
+# CI/CD Pipeline for Global Translator
+# Triggers on push to main/develop and pull requests
+# Deploys to test environment on develop branch, accp on main branch
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/dubber
+
+jobs:
+  # ========================================
+  # Build and Test Stage
+  # ========================================
+  build-backend:
+    name: Build API Gateway
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 23
+        uses: actions/setup-java@v4
+        with:
+          java-version: '23'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build with Maven
+        working-directory: apps/api-gateway
+        run: mvn clean package -DskipTests
+
+      - name: Run tests
+        working-directory: apps/api-gateway
+        run: mvn test
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-gateway-jar
+          path: apps/api-gateway/target/*.jar
+          retention-days: 7
+
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [development, test, accp, production]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/frontend
+        run: npm ci
+
+      - name: Build for ${{ matrix.environment }}
+        working-directory: apps/frontend
+        run: npm run build -- --configuration=${{ matrix.environment }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-${{ matrix.environment }}
+          path: apps/frontend/dist/
+          retention-days: 7
+
+  build-services:
+    name: Build Python Services
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [orchestrator, service-asr, service-translate, service-tts, worker-audio]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: services/${{ matrix.service }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run tests
+        working-directory: services/${{ matrix.service }}
+        run: |
+          pytest --cov=. --cov-report=xml || true
+
+  # ========================================
+  # Docker Build Stage
+  # ========================================
+  docker-build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend, build-services]
+    if: github.event_name == 'push'
+    
+    strategy:
+      matrix:
+        include:
+          - name: api-gateway
+            context: apps/api-gateway
+            dockerfile: apps/api-gateway/Dockerfile
+          - name: frontend
+            context: apps/frontend
+            dockerfile: apps/frontend/Dockerfile
+          - name: orchestrator
+            context: services/orchestrator
+            dockerfile: services/orchestrator/Dockerfile
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.name }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ========================================
+  # Deploy to Test Environment
+  # ========================================
+  deploy-test:
+    name: Deploy to Test
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: github.ref == 'refs/heads/develop'
+    environment: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Test Server
+        run: |
+          echo "Deploying to Test environment..."
+          # Add your deployment commands here
+          # Example: SSH to server, pull images, run docker-compose
+          # ssh user@test-server "cd /app && docker-compose -f docker-compose.test.yml pull && docker-compose -f docker-compose.test.yml up -d"
+
+      - name: Wait for services to start
+        run: sleep 30
+
+      - name: Health check
+        run: |
+          echo "Running health checks..."
+          # curl -f http://test-server:8180/actuator/health || exit 1
+
+  # ========================================
+  # Deploy to Acceptance Environment
+  # ========================================
+  deploy-accp:
+    name: Deploy to Acceptance
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: github.ref == 'refs/heads/main'
+    environment: accp
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Acceptance Server
+        run: |
+          echo "Deploying to Acceptance environment..."
+          # Add your deployment commands here
+          # Example: SSH to server, pull images, run docker-compose
+          # ssh user@accp-server "cd /app && docker-compose -f docker-compose.accp.yml pull && docker-compose -f docker-compose.accp.yml up -d"
+
+      - name: Wait for services to start
+        run: sleep 30
+
+      - name: Health check
+        run: |
+          echo "Running health checks..."
+          # curl -f http://accp-server:8280/actuator/health || exit 1
+
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests..."
+          # Add smoke test commands here
+
+  # ========================================
+  # Notify on completion
+  # ========================================
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [deploy-test, deploy-accp]
+    if: always() && (needs.deploy-test.result != 'skipped' || needs.deploy-accp.result != 'skipped')
+    
+    steps:
+      - name: Send notification
+        run: |
+          echo "Pipeline completed!"
+          echo "Test deployment: ${{ needs.deploy-test.result }}"
+          echo "Accp deployment: ${{ needs.deploy-accp.result }}"

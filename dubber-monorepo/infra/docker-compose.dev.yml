@@ -1,0 +1,107 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: dubber
+      POSTGRES_USER: dubber
+      POSTGRES_PASSWORD: dubber
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  api-gateway:
+    build: ../apps/api-gateway
+    depends_on:
+      - postgres
+      - minio
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/dubber
+      SPRING_DATASOURCE_USERNAME: dubber
+      SPRING_DATASOURCE_PASSWORD: dubber
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio123
+    ports:
+      - "8080:8080"
+
+  worker-audio:
+    build: ../services/worker-audio
+    depends_on:
+      - minio
+      - redis
+      - rabbitmq
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio123
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
+      REDIS_URL: redis://redis:6379/0
+
+  service-asr:
+    build: ../services/service-asr
+    depends_on:
+      - redis
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8100:8100"
+
+  service-translate:
+    build: ../services/service-translate
+    ports:
+      - "8200:8200"
+
+  service-tts:
+    build: ../services/service-tts
+    ports:
+      - "8300:8300"
+
+  orchestrator:
+    build: ../services/orchestrator
+    depends_on:
+      - service-asr
+      - service-translate
+      - service-tts
+      - worker-audio
+      - api-gateway
+    environment:
+      API_GATEWAY_URL: http://api-gateway:8080
+      ASR_URL: http://service-asr:8100
+      TRANSLATE_URL: http://service-translate:8200
+      TTS_URL: http://service-tts:8300
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
+    ports:
+      - "8400:8400"
+
+volumes:
+  pgdata:
+  minio-data:

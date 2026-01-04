@@ -1,0 +1,67 @@
+<div class="upload-container">
+  <h2>Dubber – Upload Video</h2>
+
+  <!-- Error Message Display -->
+  <div *ngIf="errorMessage" class="error-banner">
+    <span class="error-icon">⚠️</span>
+    <span class="error-text">{{ errorMessage }}</span>
+    <button (click)="errorMessage = ''" class="close-btn">✕</button>
+  </div>
+
+  <div class="form-group">
+    <label for="file-input">Select Video File:</label>
+    <input id="file-input" type="file" (change)="onFileChange($event)" accept="video/*" />
+    <small *ngIf="selectedFile" class="file-info">✓ Selected: {{ selectedFile.name }}</small>
+  </div>
+
+  <div class="language-selector">
+    <div class="form-group">
+      <label for="country-select">Select Country:</label>
+      <select id="country-select" [(ngModel)]="selectedCountryCode" (change)="onCountryChange()"
+        class="country-dropdown">
+        <option *ngFor="let country of countries" [value]="country.code">
+          {{ country.flag }} {{ country.name }}
+        </option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="language-select">Select Language:</label>
+      <select id="language-select" [(ngModel)]="targetLang" class="language-dropdown">
+        <option *ngFor="let lang of availableLanguages" [value]="lang.code">
+          {{ lang.name }} ({{ lang.nativeName }})
+        </option>
+      </select>
+      <small *ngIf="targetLang" class="lang-info">✓ Selected language loaded</small>
+    </div>
+  </div>
+
+  <button (click)="onUpload()" [disabled]="!selectedFile || status === 'UPLOADING...'" class="upload-btn">
+    {{ status === 'UPLOADING...' ? 'Uploading...' : 'Upload' }}
+  </button>
+
+  <div *ngIf="jobId" class="job-status">
+    <h3>Upload Status</h3>
+    <p><strong>Job ID:</strong> {{ jobId }}</p>
+    <p><strong>Status:</strong> <span class="status-badge" [ngClass]="status">{{ status }}</span></p>
+
+    <div class="progress-bar-container" *ngIf="progress > 0 || status === 'PROCESSING'">
+      <div class="progress-label">Progress: {{ progress }}%</div>
+      <div class="progress-bar">
+        <div class="progress-fill" [style.width.%]="progress"></div>
+      </div>
+      <div *ngIf="etr" class="etr-label">Estimated time remaining: <strong>{{ etr }}</strong></div>
+      <div *ngIf="activity" class="activity-label">Activity: <em>{{ activity }}</em></div>
+    </div>
+
+    <div class="button-group">
+      <!-- Auto-polling active, no refresh button needed -->
+      <span *ngIf="status === 'PROCESSING' || status === 'QUEUED'" class="polling-indicator">
+        Scanning job status...
+      </span>
+      <button (click)="download()" [disabled]="status !== 'COMPLETED'" class="download-btn">
+        Download dubbed video
+      </button>
+    </div>
+  </div>
+</div>
