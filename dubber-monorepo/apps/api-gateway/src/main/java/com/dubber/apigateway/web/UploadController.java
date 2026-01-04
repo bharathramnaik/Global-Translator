@@ -126,6 +126,66 @@ public class UploadController {
         }
     }
 
+    /**
+     * Cleanup endpoint - call AFTER user successfully downloads the file
+     * This deletes both source and output files from MinIO to save storage
+     * and optionally resets/deletes the job record
+     */
+    @PostMapping("/job/{id}/cleanup")
+    public ResponseEntity<?> cleanupJob(@PathVariable("id") Long id,
+            @RequestParam(value = "deleteRecord", defaultValue = "false") boolean deleteRecord) {
+        try {
+            Job job = jobRepository.findById(id)
+                    .orElseThrow(() -> new RuntimeException("Job not found"));
+
+            int filesDeleted = 0;
+
+            // Delete source file from MinIO
+            if (job.getSourceObjectKey() != null) {
+                try {
+                    minioService.deleteFile(job.getSourceObjectKey());
+                    filesDeleted++;
+                } catch (Exception e) {
+                    // File might already be deleted, continue
+                }
+            }
+
+            // Delete output file from MinIO
+            if (job.getOutputObjectKey() != null) {
+                try {
+                    minioService.deleteFile(job.getOutputObjectKey());
+                    filesDeleted++;
+                } catch (Exception e) {
+                    // File might already be deleted, continue
+                }
+            }
+
+            if (deleteRecord) {
+                // Delete the job record entirely
+                jobRepository.delete(job);
+                return ResponseEntity.ok(Map.of(
+                        "message", "Job and files cleaned up successfully",
+                        "filesDeleted", filesDeleted,
+                        "recordDeleted", true));
+            } else {
+                // Mark job as cleaned but keep record
+                job.setSourceObjectKey(null);
+                job.setOutputObjectKey(null);
+                job.setActivity("Cleaned up - files deleted");
+                job.setUpdatedAt(java.time.Instant.now());
+                jobRepository.save(job);
+
+                return ResponseEntity.ok(Map.of(
+                        "message", "Files cleaned up successfully",
+                        "filesDeleted", filesDeleted,
+                        "recordDeleted", false));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Cleanup failed: " + e.getMessage(), "code", "CLEANUP_ERROR"));
+        }
+    }
+
     private boolean isAllowedFile(String filename) {
         int dotIndex = filename.lastIndexOf(".");
         if (dotIndex == -1 || dotIndex == filename.length() - 1) {

@@ -65,4 +65,22 @@ public class MinioService {
             throw new RuntimeException("Presigned URL failed", e);
         }
     }
+
+    /**
+     * Delete a file from MinIO - used for cleanup after download
+     */
+    public void deleteFile(String objectName) {
+        if (!minioEnabled || objectName == null) {
+            return;
+        }
+        try {
+            minioClient.removeObject(
+                    RemoveObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(objectName)
+                            .build());
+        } catch (Exception e) {
+            throw new RuntimeException("MinIO delete failed: " + e.getMessage(), e);
+        }
+    }
 }

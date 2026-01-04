@@ -32,9 +32,10 @@ MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minio123")
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://localhost:8080")
 
 # Auto-cleanup settings (to save storage space)
-CLEANUP_PROCESSED_FILES = os.getenv("CLEANUP_PROCESSED_FILES", "true").lower() == "true"
-CLEANUP_AFTER_MINUTES = int(os.getenv("CLEANUP_AFTER_MINUTES", "30"))
-CLEANUP_SOURCE_AFTER_PROCESS = os.getenv("CLEANUP_SOURCE_AFTER_PROCESS", "true").lower() == "true"
+# Files are now cleaned AFTER user downloads (triggered by API Gateway)
+CLEANUP_PROCESSED_FILES = os.getenv("CLEANUP_PROCESSED_FILES", "false").lower() == "true"
+CLEANUP_AFTER_MINUTES = int(os.getenv("CLEANUP_AFTER_MINUTES", "60"))
+CLEANUP_SOURCE_AFTER_PROCESS = os.getenv("CLEANUP_SOURCE_AFTER_PROCESS", "false").lower() == "true"
 
 # Setup MinIO
 minio_client = Minio(
